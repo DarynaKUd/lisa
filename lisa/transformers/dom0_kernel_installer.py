@@ -10,8 +10,8 @@ from dataclasses_json import dataclass_json
 from lisa import schema
 from lisa.node import Node
 from lisa.operating_system import CBLMariner
-from lisa.tools import Cp, Echo, Ln, Ls, Sed, Tar, Uname
-from lisa.util import field_metadata
+from lisa.tools import Cat, Cp, Echo, Ln, Ls, Sed, Tar, Uname
+from lisa.util import UnsupportedDistroException, field_metadata
 
 from .kernel_installer import BaseInstaller, BaseInstallerSchema
 from .kernel_source_installer import SourceInstaller, SourceInstallerSchema
@@ -67,8 +67,11 @@ class BinaryInstaller(BaseInstaller):
         return []
 
     def validate(self) -> None:
-        # nothing to validate before source installer started.
-        ...
+        if not isinstance(self._node.os, CBLMariner):
+            raise UnsupportedDistroException(
+                self._node.os,
+                f"The '{self.type_name()}' installer only support Mariner distro",
+            )
 
     def install(self) -> str:
         node = self._node
@@ -127,20 +130,21 @@ class BinaryInstaller(BaseInstaller):
                 node.get_pure_path(f"/boot/initrd.img-{new_kernel}"),
             )
         else:
-            # Mariner 3.0 initrd
-            target = f"/boot/initramfs-{current_kernel}.img"
-            link = f"/boot/initramfs-{new_kernel}.img"
-
-            if isinstance(node.os, CBLMariner) and mariner_version == 2:
+            if mariner_version == 2:
                 # Mariner 2.0 initrd
                 target = f"/boot/initrd.img-{current_kernel}"
                 link = f"/boot/initrd.img-{new_kernel}"
 
-            ln = node.tools[Ln]
-            ln.create_link(
-                target=target,
-                link=link,
-            )
+                ln = node.tools[Ln]
+                ln.create_link(
+                    target=target,
+                    link=link,
+                )
+            else:
+                # Mariner 3.0 and above
+                initramfs = f"/boot/initramfs-{new_kernel}.img"
+                dracut_cmd = f"dracut --force {initramfs} {new_kernel}"
+                node.execute(dracut_cmd, sudo=True, shell=True)
 
         if kernel_config_path:
             # Copy kernel config
@@ -243,6 +247,9 @@ def _update_mariner_config(
         initrd_regexp = f"mariner_initrd_mshv=initrd.img-{current_kernel}"
         initrd_replacement = f"mariner_initrd_mshv=initrd.img-{new_kernel}"
 
+    cat = node.tools[Cat]
+    cat.read(mariner_config, sudo=True, force_run=True)
+
     # Modify file to point new kernel binary
     sed.substitute(
         regexp=vmlinuz_regexp,
@@ -258,3 +265,25 @@ def _update_mariner_config(
         file=mariner_config,
         sudo=True,
     )
+
+    uuid = node.execute(
+        "lsblk -o MOUNTPOINT,UUID | grep '/ ' | awk '{print $2}'",
+        sudo=True,
+        shell=True,
+        expected_exit_code=0,
+    ).stdout.strip()
+    partuuid = node.execute(
+        "lsblk -o MOUNTPOINT,PARTUUID | grep '/ ' | awk '{print $2}'",
+        sudo=True,
+        shell=True,
+        expected_exit_code=0,
+    ).stdout.strip()
+
+    # initramfs can only understand PARTUUID
+    sed.substitute(
+        regexp=f"root=UUID={uuid}",
+        replacement=f"root=PARTUUID={partuuid}",
+        file=mariner_config,
+        sudo=True,
+    )
+    cat.read(mariner_config, sudo=True, force_run=True)
