@@ -206,7 +206,8 @@ class CloudHypervisorTestSuite(TestSuite):
         # will not run it with data-disk and it would not add direct=on
         # if run_without_cache is not set to YES
         use_datadisk = variables.get("use_datadisk", "")
-        disable_datadisk_cache = variables.get("disable_datadisk_cache", "")
+        use_pmem = variables.get("ch_tests_use_pmem", "")
+        disable_disk_cache = variables.get("disable_disk_cache", "")
         block_size_kb = variables.get("block_size_kb", "")
 
         if not ms_access_token:
@@ -229,10 +230,12 @@ class CloudHypervisorTestSuite(TestSuite):
 
         if block_size_kb:
             CloudHypervisorTests.block_size_kb = block_size_kb
+        if use_pmem:
+            CloudHypervisorTests.use_pmem = use_pmem
         if use_datadisk:
             CloudHypervisorTests.use_datadisk = use_datadisk
-        if disable_datadisk_cache:
-            CloudHypervisorTests.disable_datadisk_cache = disable_datadisk_cache
+        if disable_disk_cache:
+            CloudHypervisorTests.disable_disk_cache = disable_disk_cache
 
 
 def get_test_list(variables: Dict[str, Any], var1: str, var2: str) -> Any:
