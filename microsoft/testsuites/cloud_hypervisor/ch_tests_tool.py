@@ -66,6 +66,15 @@ class CloudHypervisorTests(Tool):
     # Block perf related env var
     use_datadisk = ""
     use_pmem = ""
+    """
+    Following is the last usable entry in e820 table and is safest to use for
+    pmem since its most likely to be free. 0x0000001000000000 is 64G.
+    So, set it as default.
+
+    [    0.000000] BIOS-e820: [mem 0x0000001000000000-0x00000040ffffffff] usable
+
+    """
+    pmem_config = "memmap=8G!64G"
     disable_disk_cache = ""
     block_size_kb = ""
 
@@ -276,7 +285,9 @@ class CloudHypervisorTests(Tool):
             if self.use_ms_bz_image:
                 self.env_vars["USE_MS_BZ_IMAGE"] = self.use_ms_bz_image
 
-            if self.use_datadisk:
+            if self.use_pmem:
+                self.env_vars["USE_DATADISK"] = self.use_pmem
+            elif self.use_datadisk:
                 self.env_vars["USE_DATADISK"] = self.use_datadisk
             if self.disable_disk_cache:
                 self.env_vars["DISABLE_DATADISK_CACHING"] = self.disable_disk_cache
@@ -509,37 +520,42 @@ class CloudHypervisorTests(Tool):
             node.tools[Chmod].chmod(path=device_path, permission=permission, sudo=True)
 
     def _get_pmem_for_block_tests(self) -> str:
-        """
-        Following is the last usable entry in e829 table and is safest to use for
-        pmem since its most likely to be free. 0x0000001000000000 is 64G.
-
-        [    0.000000] BIOS-e820: [mem 0x0000001000000000-0x00000040ffffffff] usable
-
-        """
-        memmap_str = "memmap=16G!64G"
-
         lsblk = self.node.tools[Lsblk]
         sed = self.node.tools[Sed]
         cat = self.node.tools[Cat]
 
-        grub_file = "/etc/default/grub"
+        os_major_version = int(self.node.os.information.version.major)
+        if isinstance(self.node.os, CBLMariner) and os_major_version == 2:
+            grub_file = "/boot/mariner-mshv.cfg"
+            match_line = "mariner_cmdline_mshv="
+            regexp = '$'
+            replacement = f' {self.pmem_config} '
+        else:
+            grub_file = "/etc/default/grub"
+            match_line = "GRUB_CMDLINE_LINUX="
+            regexp = '"$'
+            replacement = f' {self.pmem_config} "'
+        cat.read(file=grub_file, sudo=True, force_run=True)
         grub_cmdline = cat.read_with_filter(
             file=grub_file,
-            grep_string="GRUB_CMDLINE_LINUX=",
+            grep_string=match_line,
             sudo=True,
         )
-        if memmap_str not in grub_cmdline:
+        if self.pmem_config not in grub_cmdline:
             sed.substitute(
                 file=grub_file,
-                match_lines="^GRUB_CMDLINE_LINUX=",
-                regexp='"$',
-                replacement=' memmap=16G!64G "',
+                match_lines=f"^{match_line}",
+                regexp=regexp,
+                replacement=replacement,
                 sudo=True,
             )
+            cat.read(file=grub_file, sudo=True, force_run=True)
+
         if isinstance(self.node.os, CBLMariner):
-            self.node.execute(
-                "grub2-mkconfig -o /boot/grub2/grub.cfg", sudo=True, shell=True
-            )
+            if os_major_version != 2:
+                self.node.execute(
+                    "grub2-mkconfig -o /boot/grub2/grub.cfg", sudo=True, shell=True
+                )
         elif isinstance(self.node.os, Ubuntu):
             self.node.execute("update-grub", sudo=True, shell=True)
         else:
@@ -548,9 +564,10 @@ class CloudHypervisorTests(Tool):
                 "pmem for CH tests is supported only on Ubuntu and CBLMariner",
             )
 
-        lsblk.run()
+        lsblk.run(force_run=True)
         self.node.reboot(time_out=900)
-        lsblk.run()
+        lsblk.run(force_run=True)
+        self.node.execute("lsblk -o NAME,PHY-SEC,LOG-SEC", sudo=True, shell=True)
 
         return "/dev/pmem0"
 

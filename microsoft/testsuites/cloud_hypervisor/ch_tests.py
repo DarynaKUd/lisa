@@ -207,6 +207,7 @@ class CloudHypervisorTestSuite(TestSuite):
         # if run_without_cache is not set to YES
         use_datadisk = variables.get("use_datadisk", "")
         use_pmem = variables.get("ch_tests_use_pmem", "")
+        pmem_config = variables.get("ch_tests_pmem_config", "")
         disable_disk_cache = variables.get("disable_disk_cache", "")
         block_size_kb = variables.get("block_size_kb", "")
 
@@ -232,6 +233,8 @@ class CloudHypervisorTestSuite(TestSuite):
             CloudHypervisorTests.block_size_kb = block_size_kb
         if use_pmem:
             CloudHypervisorTests.use_pmem = use_pmem
+            if pmem_config:
+                CloudHypervisorTests.pmem_config = pmem_config
         if use_datadisk:
             CloudHypervisorTests.use_datadisk = use_datadisk
         if disable_disk_cache:
